@@ -7,17 +7,20 @@ $form = New-Object System.Windows.Forms.Form -Property @{
 }
 $timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 500; Enabled = 1}
 $ctxMenu = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuExpand = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Expand All' }
 $ctxMenuStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start' }
 $ctxMenuRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart' }
-$ctxMenuClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close' }
+$ctxMenuClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Stop' }
 $ctxMenuClosed = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuCloseExpand = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Expand All' }
 $ctxMenuClosedStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start' }
 $ctxMenuClosedRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart'; Enabled = 0 }
-$ctxMenuClosedClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close'; Enabled = 0 }
+$ctxMenuClosedClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Stop'; Enabled = 0 }
 $ctxMenuNoPath = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuNoPathExpand = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Expand All' }
 $ctxMenuNoPathStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start'; Enabled = 0 }
 $ctxMenuNoPathRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart'; Enabled = 0 }
-$ctxMenuNoPathClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close'; Enabled = 0 }
+$ctxMenuNoPathClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Stop'; Enabled = 0 }
 $closeProcess = {
     $Form.Text = 'Closing ' + $global:selectedNode.Text
     $stopProcess = Stop-Process $global:selectedNode.Name -ErrorAction SilentlyContinue -Force -PassThru
@@ -39,6 +42,17 @@ $startProcess = {
         $Form.Text = $global:selectedNode.Text + ' could not be started after close'
     }
 }
+
+$ctxMenuExpand.add_Click({
+    $global:selectedNode.ExpandAll()
+})
+$ctxMenuCloseExpand.add_Click({
+    $global:selectedNode.ExpandAll()
+})
+$ctxMenuNoPathExpand.add_Click({
+    $global:selectedNode.ExpandAll()
+})
+
 $ctxMenuStart.add_Click({
     $Path = $global:selectedNode.Text.Split(':')
     if($Path[1]){
@@ -55,6 +69,7 @@ $ctxMenuRestart.add_Click({
 $ctxMenuClose.add_Click(
     $closeProcess
 )
+$ctxMenu.MenuItems.AddRange(@($ctxMenuExpand))
 $ctxMenu.MenuItems.AddRange(@($ctxMenuStart))
 $ctxMenu.MenuItems.AddRange(@($ctxMenuRestart))
 $ctxMenu.MenuItems.AddRange(@($ctxMenuClose))
@@ -64,9 +79,12 @@ $ctxMenuClosedStart.add_Click({
         . $startProcess
     }
 })
+$ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuCloseExpand))
 $ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathStart))
 $ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathRestart))
 $ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathClose))
+
+$ctxMenuClosed.MenuItems.AddRange(@($ctxMenuNoPathExpand))
 $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedStart))
 $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedRestart))
 $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedClose)) 
@@ -77,13 +95,12 @@ $tree.ContextMenu = $ctxMenu
 $tree.Add_AfterSelect({
     $global:selectedNode = $_.Node
 })
+$tree.add_NodeMouseClick({
+    $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
+})
 $tree.add_NodeMouseDoubleClick({
     $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
     ($p |where ProcessId -eq $this.SelectedNode.Name)|select * |Out-GridView
-})
-$tree.add_NodeMouseClick({
-    Write-Host ($_.Button.ToString() + ': ' + $_.Node.Name)
-    $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
 })
 $getProcess = { Get-CimInstance Win32_Process }
 $global:p = . $getProcess
@@ -138,6 +155,26 @@ function Disable-ProcessCreationEvent
    Unregister-Event -Force -SourceIdentifier "WMI.ProcessCreated"
 }
 Enable-ProcessCreationEvent
+
+function Enable-ProcessDeletionEvent
+{
+    $identifier = "WMI.ProcessStopped"
+    $query = "SELECT * FROM __instancedeletionevent " +
+                 "WITHIN 5 " +
+                 "WHERE targetinstance isa 'win32_process'"
+    Register-CimIndicationEvent -Query $query -SourceIdentifier $identifier `
+        -SupportEvent -Action {
+            [void] (New-Event "PowerShell.ProcessStopped" `
+                -Sender $sender `
+                -EventArguments $EventArgs.NewEvent.TargetInstance)
+        }
+}
+function Disable-ProcessDeletionEvent
+{
+   Unregister-Event -Force -SourceIdentifier "WMI.ProcessStopped"
+}
+Enable-ProcessDeletionEvent
+
 function Show-Nodes($tree){
     function Show-NodeCheckChild($tree){
         if($tree.Nodes.Name){
@@ -155,29 +192,24 @@ function Show-Nodes($tree){
 }
 $timer.add_Tick({
     Get-Event |foreach {
-        # Program opened
-        $global:p += Get-CimInstance Win32_Process -Filter "ProcessID=$($_.SourceArgs.ProcessId)"
-        Write-Host $global:p[-1]
-        $find = $tree.Nodes.Find($_.SourceArgs.ParentProcessId, 1)
-        $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Text = ($_.SourceArgs.ProcessName + ': ' + $_.SourceArgs.Path); Name = $_.SourceArgs.ProcessId}
-        $newNode.ForeColor = [System.Drawing.Color]::Green
-        $find[0].Nodes.Add($newNode)
-        $_ | Remove-Event
-    }
-    $diff = diff (. $getProcess).ProcessId (Show-Nodes -tree $tree)
-    if($diff){
-        $diff |foreach {
-            if($_.SideIndicator -eq '=>'){
-                # Program closed
-                $find = $tree.Nodes.Find($_.InputObject, 1)
-                $find[0].ForeColor = [System.Drawing.Color]::Red
-                $find[0].ContextMenu = $ctxMenuClosed
-            }
+        if($_.SourceIdentifier -eq 'PowerShell.ProcessCreated'){
+            # Program opened
+            $global:p += Get-CimInstance Win32_Process -Filter "ProcessID=$($_.SourceArgs.ProcessId)"
+            $find = $tree.Nodes.Find($_.SourceArgs.ParentProcessId, 1)
+            $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Text = ($_.SourceArgs.ProcessName + ': ' + $_.SourceArgs.Path); Name = $_.SourceArgs.ProcessId}
+            $newNode.ForeColor = [System.Drawing.Color]::Green
+            $find[0].Nodes.Add($newNode)
+        }else{
+            # Program closed
+            $find = $tree.Nodes.Find($_.SourceArgs.ProcessId, 1)
+            $find[0].ForeColor = [System.Drawing.Color]::Red
+            $find[0].ContextMenu = $ctxMenuClosed
         }
+        $_ | Remove-Event
     }
 })
 $form.Add_Closing({
     $timer.Enabled = 0
-    Disable-ProcessCreationEvent
+    Disable-ProcessCreationEvent    Disable-ProcessDeletionEvent
 })
 [void]$form.ShowDialog()
