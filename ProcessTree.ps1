@@ -1,6 +1,4 @@
-﻿
-
-[reflection.assembly]::LoadWithPartialName("System.Windows.Forms") |Out-Null
+﻿[reflection.assembly]::LoadWithPartialName("System.Windows.Forms") |Out-Null
 [reflection.assembly]::LoadWithPartialName("System.Drawing") |Out-Null
 $form = New-Object System.Windows.Forms.Form -Property @{
     Name = 'WinWat'
@@ -95,4 +93,3 @@ $form.Add_Closing({
     Disable-ProcessCreationEvent
 })
 [void]$form.ShowDialog()
-
