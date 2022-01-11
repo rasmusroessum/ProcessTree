@@ -2,6 +2,7 @@ Start script:
 powershell -ep bypass -file ./ProcessTree.ps1
 
 Green color: Program has opened since start of script
+
 Red color: Program has opened since start of script
 
 Screenshot of program:
