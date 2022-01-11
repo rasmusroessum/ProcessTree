@@ -5,7 +5,7 @@ $form = New-Object System.Windows.Forms.Form -Property @{
     Text = 'WinWat'
     Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
 }
-$timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 1000; Enabled = 1}
+$timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 500; Enabled = 1}
 $ctxMenu = New-Object System.Windows.Forms.ContextMenu
 $ctxMenuStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start' }
 $ctxMenuRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart' }
@@ -78,21 +78,21 @@ $tree.Add_AfterSelect({
     $global:selectedNode = $_.Node
 })
 $tree.add_NodeMouseDoubleClick({
-    Write-Host ('Double Click: ' +  $_.Node.Name)
     $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
+    ($p |where ProcessId -eq $this.SelectedNode.Name)|select * |Out-GridView
 })
 $tree.add_NodeMouseClick({
     Write-Host ($_.Button.ToString() + ': ' + $_.Node.Name)
     $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
 })
 $getProcess = { Get-CimInstance Win32_Process }
-$p = . $getProcess
+$global:p = . $getProcess
 $count = $p.Count
-$p = $p |sort CreationDate |select *, @{
+$global:p = $global:p |sort CreationDate |select *, @{
     N = 'ParentIsOpen'
     E = { [bool](Get-Process -Id $_.ParentProcessId -Ea SilentlyContinue) }
 }
-$root = $p |where ProcessId -eq 0
+$root = $global:p |where ProcessId -eq 0
 $root = New-Object System.Windows.Forms.TreeNode -Property @{Name = $root.ProcessId;Text = $root.Name; ContextMenu = $ctxMenuNoPath}
 [void]$tree.Nodes.Add($root)
 $p |where ProcessId -ne 0 |foreach {
@@ -156,6 +156,8 @@ function Show-Nodes($tree){
 $timer.add_Tick({
     Get-Event |foreach {
         # Program opened
+        $global:p += Get-CimInstance Win32_Process -Filter "ProcessID=$($_.SourceArgs.ProcessId)"
+        Write-Host $global:p[-1]
         $find = $tree.Nodes.Find($_.SourceArgs.ParentProcessId, 1)
         $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Text = ($_.SourceArgs.ProcessName + ': ' + $_.SourceArgs.Path); Name = $_.SourceArgs.ProcessId}
         $newNode.ForeColor = [System.Drawing.Color]::Green
