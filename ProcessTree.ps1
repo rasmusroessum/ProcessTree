@@ -3,7 +3,7 @@
 $form = New-Object System.Windows.Forms.Form -Property @{
     Name = 'WinWat'
     Text = 'WinWat'
-    Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
+    Size = New-Object System.Drawing.Size -Property @{Height = 600; Width = 500}
 }
 $timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 500; Enabled = 1}
 $ctxMenu = New-Object System.Windows.Forms.ContextMenu
@@ -89,7 +89,7 @@ $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedStart))
 $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedRestart))
 $ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedClose)) 
 $tree = New-Object System.Windows.Forms.TreeView -Property @{
-    Anchor = 15; Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
+    Anchor = 15; Size = New-Object System.Drawing.Size -Property @{Height = 561; Width = 485}
 }
 $tree.ContextMenu = $ctxMenu
 $tree.Add_AfterSelect({
