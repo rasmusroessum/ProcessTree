@@ -6,25 +6,110 @@ $form = New-Object System.Windows.Forms.Form -Property @{
     Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
 }
 $timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 1000; Enabled = 1}
-$tree = New-Object System.Windows.Forms.TreeView -Property @{
-    Anchor = 15
-    Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
+$ctxMenu = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start' }
+$ctxMenuRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart' }
+$ctxMenuClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close' }
+$ctxMenuClosed = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuClosedStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start' }
+$ctxMenuClosedRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart'; Enabled = 0 }
+$ctxMenuClosedClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close'; Enabled = 0 }
+$ctxMenuNoPath = New-Object System.Windows.Forms.ContextMenu
+$ctxMenuNoPathStart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Start'; Enabled = 0 }
+$ctxMenuNoPathRestart = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Restart'; Enabled = 0 }
+$ctxMenuNoPathClose = New-Object System.Windows.Forms.MenuItem -Property @{ Text = 'Close'; Enabled = 0 }
+$closeProcess = {
+    $Form.Text = 'Closing ' + $global:selectedNode.Text
+    $stopProcess = Stop-Process $global:selectedNode.Name -ErrorAction SilentlyContinue -Force -PassThru
+    if($stopProcess.HasExited){
+        $Form.Text = $global:selectedNode.Name + ' closed'
+        $global:selectedNode.ContextMenu = $ctxMenuClosedProcess
+        $global:selectedNode.ForeColor = [System.Drawing.Color]::Red
+        $global:selectedNode.ContextMenu = $ctxMenuClosed
+    }else{
+        $Form.Text = $global:selectedNode.Text + ' could not be closed'
+    }
 }
+$startProcess = {
+    $Path = $global:selectedNode.Text.Split(':')
+    $StartProcess = Start-Process -FilePath ($Path[1..2] -join ':') -ErrorAction SilentlyContinue -PassThru
+    if($StartProcess){
+        $Form.Text = $global:selectedNode.Text + ' was started'
+    }else{
+        $Form.Text = $global:selectedNode.Text + ' could not be started after close'
+    }
+}
+$ctxMenuStart.add_Click({
+    $Path = $global:selectedNode.Text.Split(':')
+    if($Path[1]){
+        . $startProcess
+    }
+})
+$ctxMenuRestart.add_Click({
+    $Path = $global:selectedNode.Text.Split(':')
+    if($Path[1]){
+        . $closeProcess
+        . $startProcess
+    }
+})
+$ctxMenuClose.add_Click(
+    $closeProcess
+)
+$ctxMenu.MenuItems.AddRange(@($ctxMenuStart))
+$ctxMenu.MenuItems.AddRange(@($ctxMenuRestart))
+$ctxMenu.MenuItems.AddRange(@($ctxMenuClose))
+$ctxMenuClosedStart.add_Click({
+    $Path = $global:selectedNode.Text.Split(':')
+    if($Path[1]){
+        . $startProcess
+    }
+})
+$ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathStart))
+$ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathRestart))
+$ctxMenuNoPath.MenuItems.AddRange(@($ctxMenuNoPathClose))
+$ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedStart))
+$ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedRestart))
+$ctxMenuClosed.MenuItems.AddRange(@($ctxMenuClosedClose)) 
+$tree = New-Object System.Windows.Forms.TreeView -Property @{
+    Anchor = 15; Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
+}
+$tree.ContextMenu = $ctxMenu
+$tree.Add_AfterSelect({
+    $global:selectedNode = $_.Node
+})
+$tree.add_NodeMouseDoubleClick({
+    Write-Host ('Double Click: ' +  $_.Node.Name)
+    $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
+})
+$tree.add_NodeMouseClick({
+    Write-Host ($_.Button.ToString() + ': ' + $_.Node.Name)
+    $this.SelectedNode = $_.Node #Select the node (Helpful when using a ContextMenuStrip)
+})
 $getProcess = { Get-CimInstance Win32_Process }
 $p = . $getProcess
 $count = $p.Count
-$p = $p |sort CreationDate |select Name, ProcessId, Path, CreationDate, ParentProcessId, @{
+$p = $p |sort CreationDate |select *, @{
     N = 'ParentIsOpen'
     E = { [bool](Get-Process -Id $_.ParentProcessId -Ea SilentlyContinue) }
 }
-[void]$tree.Nodes.Add(0, (($p |where ProcessId -eq 0).Name + ': ' + ($p |where ProcessId -eq 0).Path))
+$root = $p |where ProcessId -eq 0
+$root = New-Object System.Windows.Forms.TreeNode -Property @{Name = $root.ProcessId;Text = $root.Name; ContextMenu = $ctxMenuNoPath}
+[void]$tree.Nodes.Add($root)
 $p |where ProcessId -ne 0 |foreach {
+    $Path = if($_.Path){': ' + $_.Path}
+    $ContextMenu = if($Path){
+        $ctxMenu
+    }else{
+        $ctxMenuNoPath
+    }
     if($_.ParentProcessId -eq 0 -or $_.ParentIsOpen -eq 0){
-        [void]$tree.Nodes[0].Nodes.Add($_.ProcessId, ($_.Name + ': ' + $_.Path))
+        $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Name = $_.ProcessId;Text = ($_.Name + $Path); ContextMenu = $ContextMenu}
+        [void]$tree.Nodes[0].Nodes.Add($newNode) 
     }else{
         $find = $tree.Nodes.Find($_.ParentProcessId, 1)
         if($find){
-            [void]$find[0].Nodes.Add($_.ProcessId, ($_.Name + ': ' + $_.Path))
+            $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Name = $_.ProcessId;Text = ($_.Name + $Path); ContextMenu = $ContextMenu}
+            [void]$find[0].Nodes.Add($newNode)
         }else{
             [array]$forLater += $_
         }
@@ -32,7 +117,7 @@ $p |where ProcessId -ne 0 |foreach {
 }
 $forLater |foreach {
     $find = $tree.Nodes.Find($_.ParentProcessId, 1)
-    [void]$find[0].Nodes.Add($_.ProcessId, ($_.Name + ': ' + $_.Path))
+    [void]$find[0].Nodes.Add($_.ProcessId, ($_.Name + $(if($_.Path){': ' + $_.Path })))
 }
 $form.Controls.Add($tree)
 function Enable-ProcessCreationEvent
@@ -84,6 +169,7 @@ $timer.add_Tick({
                 # Program closed
                 $find = $tree.Nodes.Find($_.InputObject, 1)
                 $find[0].ForeColor = [System.Drawing.Color]::Red
+                $find[0].ContextMenu = $ctxMenuClosed
             }
         }
     }
