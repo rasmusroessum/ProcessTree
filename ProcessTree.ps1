@@ -5,11 +5,13 @@ $form = New-Object System.Windows.Forms.Form -Property @{
     Text = 'WinWat'
     Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
 }
+$timer = New-Object System.Windows.Forms.Timer -Property @{Interval = 1000; Enabled = 1}
 $tree = New-Object System.Windows.Forms.TreeView -Property @{
     Anchor = 15
     Size = New-Object System.Drawing.Size -Property @{Height = 300; Width = 300}
 }
-$p = Get-CimInstance Win32_Process
+$getProcess = { Get-CimInstance Win32_Process }
+$p = . $getProcess
 $count = $p.Count
 $p = $p |sort CreationDate |select Name, ProcessId, CreationDate, ParentProcessId, @{
     N = 'ParentIsOpen'
@@ -33,4 +35,46 @@ $forLater |foreach {
     [void]$find[0].Nodes.Add($_.ProcessId, $_.Name)
 }
 $form.Controls.Add($tree)
+function Enable-ProcessCreationEvent
+{
+    $identifier = "WMI.ProcessCreated"
+    $query = "SELECT * FROM __instancecreationevent " +
+                 "WITHIN 5 " +
+                 "WHERE targetinstance isa 'win32_process'"
+    Register-CimIndicationEvent -Query $query -SourceIdentifier $identifier `
+        -SupportEvent -Action {
+            [void] (New-Event "PowerShell.ProcessCreated" `
+                -Sender $sender `
+                -EventArguments $EventArgs.NewEvent.TargetInstance)
+        }
+}
+function Disable-ProcessCreationEvent
+{
+   Unregister-Event -Force -SourceIdentifier "WMI.ProcessCreated"
+}
+Enable-ProcessCreationEvent
+$timer.add_Tick({
+    Get-Event |foreach {
+        # Program opened
+        $find = $tree.Nodes.Find($_.SourceArgs.ParentProcessId, 1)
+        $newNode = New-Object System.Windows.Forms.TreeNode -Property @{Text = $_.SourceArgs.ProcessName; Name = $_.SourceArgs.ProcessId}
+        $newNode.ForeColor = [System.Drawing.Color]::Green
+        $find[0].Nodes.Add($newNode)
+        $_ | Remove-Event
+    }
+    $diff = diff (. $getProcess) $p -Property ProcessId
+    if($diff){
+        $diff |foreach {
+            if($_.SideIndicator -eq '=>'){
+                # Program closed
+                $find = $tree.Nodes.Find($_.ProcessId, 1)
+                $find[0].ForeColor = [System.Drawing.Color]::Red
+            }
+        }
+    }
+})
+$form.Add_Closing({
+    $timer.Enabled = 0
+    Disable-ProcessCreationEvent
+})
 [void]$form.ShowDialog()
